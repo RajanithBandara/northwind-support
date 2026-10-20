@@ -183,8 +183,96 @@ public sealed class TicketQueriesTests : IDisposable
         Assert.Equal(1, result.TotalPages);
     }
 
+    [Fact]
+    public async Task GetPagedAsync_FiltersBySlaStatus_NotApplicable()
+    {
+        // Arrange: one with null due date, one with a due date
+        var noDue = CreateTicketWithDue("TCK-0010", "No due date", _customer2.Id, _category1.Id, TicketPriority.Medium, null);
+        var withDue = CreateTicketWithDue("TCK-0011", "Has due date", _customer2.Id, _category1.Id, TicketPriority.Medium, _clock.UtcNow.AddHours(10));
+        SeedTickets(noDue, withDue);
+
+        var query = new TicketQuery { SlaStatus = SlaStatus.NotApplicable };
+
+        // Act
+        var result = await _sut.GetPagedAsync(query, CancellationToken.None);
+
+        // Assert
+        Assert.Single(result.Items);
+        Assert.Equal("TCK-0010", result.Items[0].Reference);
+        Assert.Equal(SlaStatus.NotApplicable, result.Items[0].SlaStatus);
+    }
+
+    [Fact]
+    public async Task GetPagedAsync_FiltersBySlaStatus_Met()
+    {
+        // Arrange: one resolved on time, one resolved late, one unresolved
+        var met = CreateTicketWithDue("TCK-0020", "Met ticket", _customer2.Id, _category1.Id, TicketPriority.Medium, _clock.UtcNow.AddHours(2));
+        met.ChangeStatus(TicketStatus.Resolved, _clock.UtcNow); // resolved at Now, due in 2 hours
+
+        var breachedLate = CreateTicketWithDue("TCK-0021", "Breached late", _customer2.Id, _category1.Id, TicketPriority.Medium, _clock.UtcNow.AddHours(-2));
+        breachedLate.ChangeStatus(TicketStatus.Resolved, _clock.UtcNow); // resolved at Now, due was 2 hours ago
+
+        SeedTickets(met, breachedLate);
+
+        var query = new TicketQuery { SlaStatus = SlaStatus.Met };
+
+        // Act
+        var result = await _sut.GetPagedAsync(query, CancellationToken.None);
+
+        // Assert
+        Assert.Single(result.Items);
+        Assert.Equal("TCK-0020", result.Items[0].Reference);
+        Assert.Equal(SlaStatus.Met, result.Items[0].SlaStatus);
+    }
+
+    [Fact]
+    public async Task GetPagedAsync_FiltersBySlaStatus_Breached()
+    {
+        // Arrange: one unresolved past due, one resolved on time
+        var breached = CreateTicketWithDue("TCK-0030", "Breached ticket", _customer2.Id, _category1.Id, TicketPriority.Medium, _clock.UtcNow.AddHours(-1));
+        var onTime = CreateTicketWithDue("TCK-0031", "On time ticket", _customer2.Id, _category1.Id, TicketPriority.Medium, _clock.UtcNow.AddHours(5));
+
+        SeedTickets(breached, onTime);
+
+        var query = new TicketQuery { SlaStatus = SlaStatus.Breached };
+
+        // Act
+        var result = await _sut.GetPagedAsync(query, CancellationToken.None);
+
+        // Assert
+        Assert.Single(result.Items);
+        Assert.Equal("TCK-0030", result.Items[0].Reference);
+        Assert.Equal(SlaStatus.Breached, result.Items[0].SlaStatus);
+    }
+
+    [Fact]
+    public async Task GetPagedAsync_FiltersBySlaStatus_AtRiskAndWithinSla()
+    {
+        // Standard customer: Critical window = 4h. 25% threshold = 1h.
+        // AtRisk: due in 30 mins (<= 1h)
+        var atRisk = CreateTicketWithDue("TCK-0040", "At risk ticket", _customer2.Id, _category1.Id, TicketPriority.Critical, _clock.UtcNow.AddMinutes(30));
+        // WithinSla: due in 3h (> 1h)
+        var withinSla = CreateTicketWithDue("TCK-0041", "Within SLA ticket", _customer2.Id, _category1.Id, TicketPriority.Critical, _clock.UtcNow.AddHours(3));
+
+        SeedTickets(atRisk, withinSla);
+
+        var atRiskResult = await _sut.GetPagedAsync(new TicketQuery { SlaStatus = SlaStatus.AtRisk }, CancellationToken.None);
+        var withinResult = await _sut.GetPagedAsync(new TicketQuery { SlaStatus = SlaStatus.WithinSla }, CancellationToken.None);
+
+        Assert.Single(atRiskResult.Items);
+        Assert.Equal("TCK-0040", atRiskResult.Items[0].Reference);
+        Assert.Equal(SlaStatus.AtRisk, atRiskResult.Items[0].SlaStatus);
+
+        Assert.Single(withinResult.Items);
+        Assert.Equal("TCK-0041", withinResult.Items[0].Reference);
+        Assert.Equal(SlaStatus.WithinSla, withinResult.Items[0].SlaStatus);
+    }
+
     private Ticket CreateTicket(string reference, string title, int customerId, int categoryId, TicketPriority priority) =>
         Ticket.Raise(reference, title, "Standard test description.", customerId, categoryId, priority, _clock.UtcNow);
+
+    private Ticket CreateTicketWithDue(string reference, string title, int customerId, int categoryId, TicketPriority priority, DateTime? dueAtUtc) =>
+        Ticket.Raise(reference, title, "Standard test description.", customerId, categoryId, priority, _clock.UtcNow, dueAtUtc);
 
     private void SeedTickets(params Ticket[] tickets)
     {
