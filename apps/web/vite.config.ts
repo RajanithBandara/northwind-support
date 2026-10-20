@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       proxy: {
         '/api': {
-          target: env.VITE_API_PROXY_TARGET ?? 'https://localhost:7043',
+          target: env.VITE_API_PROXY_TARGET ?? 'http://localhost:5080',
           changeOrigin: true,
           // The backend uses the ASP.NET development certificate, which is self-signed.
           secure: false,
