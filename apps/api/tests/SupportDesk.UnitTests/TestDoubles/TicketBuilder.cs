@@ -9,11 +9,27 @@ namespace SupportDesk.UnitTests.TestDoubles;
 /// </summary>
 public sealed class TicketBuilder
 {
+    private int _id;
     private string _reference = "TCK-0001";
     private TicketPriority _priority = TicketPriority.Medium;
     private TicketStatus _status = TicketStatus.New;
     private int? _assignedAgentId;
+    private DateTime? _dueAtUtc;
     private DateTime? _resolvedAtUtc;
+
+    public static TicketBuilder Default => new();
+
+    public TicketBuilder WithId(int id)
+    {
+        _id = id;
+        return this;
+    }
+
+    public TicketBuilder WithDueAt(DateTime? dueAtUtc)
+    {
+        _dueAtUtc = dueAtUtc;
+        return this;
+    }
 
     public TicketBuilder WithReference(string reference)
     {
@@ -55,7 +71,13 @@ public sealed class TicketBuilder
             customerId: 1,
             categoryId: 1,
             _priority,
-            FixedClock.DefaultNow);
+            FixedClock.DefaultNow,
+            _dueAtUtc);
+
+        if (_id != 0)
+        {
+            typeof(SupportDesk.Domain.Common.Entity).GetProperty(nameof(SupportDesk.Domain.Common.Entity.Id))!.SetValue(ticket, _id);
+        }
 
         if (_assignedAgentId is not null)
         {

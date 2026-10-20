@@ -48,9 +48,11 @@ public sealed class Ticket : AggregateRoot
     /// <summary>True while the ticket still needs work from an agent.</summary>
     public bool IsOpen => Status is not (TicketStatus.Resolved or TicketStatus.Closed);
 
+    /// <summary>True if the ticket is open and not already at Critical priority.</summary>
+    public bool CanEscalate => IsOpen && Priority != TicketPriority.Critical;
+
     /// <summary>
-    /// Raises a new ticket for a customer. It starts as <see cref="TicketStatus.New"/>, with no
-    /// owner and no due date.
+    /// Raises a new ticket for a customer.
     /// </summary>
     public static Ticket Raise(
         string reference,
@@ -59,7 +61,9 @@ public sealed class Ticket : AggregateRoot
         int customerId,
         int categoryId,
         TicketPriority priority,
-        DateTime nowUtc)
+        DateTime nowUtc,
+        DateTime? dueAtUtc = null,
+        int? assignedAgentId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reference);
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
@@ -75,7 +79,9 @@ public sealed class Ticket : AggregateRoot
             Priority = priority,
             Status = TicketStatus.New,
             CreatedAtUtc = nowUtc,
-            UpdatedAtUtc = nowUtc
+            UpdatedAtUtc = nowUtc,
+            DueAtUtc = dueAtUtc,
+            AssignedAgentId = assignedAgentId
         };
     }
 
@@ -111,4 +117,39 @@ public sealed class Ticket : AggregateRoot
         AssignedAgentId = agentId;
         UpdatedAtUtc = nowUtc;
     }
+
+    /// <summary>
+    /// Raises the priority of the ticket, recomputes the due date, and updates the owner.
+    /// </summary>
+    /// <exception cref="BusinessRuleViolationException">The ticket is Critical or Resolved/Closed.</exception>
+    public void Escalate(TicketPriority newPriority, DateTime newDueAtUtc, int? newAgentId, DateTime nowUtc)
+    {
+        if (!IsOpen)
+        {
+            throw new BusinessRuleViolationException(
+                $"Ticket {Reference} is {Status} and cannot be escalated.");
+        }
+
+        if (Priority == TicketPriority.Critical)
+        {
+            throw new BusinessRuleViolationException(
+                $"Ticket {Reference} is already at Critical priority and cannot be escalated.");
+        }
+
+        Priority = newPriority;
+        DueAtUtc = newDueAtUtc;
+        AssignedAgentId = newAgentId;
+        UpdatedAtUtc = nowUtc;
+    }
+
+    /// <summary>
+    /// Returns the priority one step higher than the given priority.
+    /// </summary>
+    public static TicketPriority NextPriority(TicketPriority current) => current switch
+    {
+        TicketPriority.Low => TicketPriority.Medium,
+        TicketPriority.Medium => TicketPriority.High,
+        TicketPriority.High => TicketPriority.Critical,
+        _ => throw new BusinessRuleViolationException("Cannot escalate from Critical priority.")
+    };
 }
