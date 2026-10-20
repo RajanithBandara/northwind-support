@@ -2,15 +2,16 @@ using Moq;
 using SupportDesk.Application.Contracts.Tickets;
 using SupportDesk.Application.Exceptions;
 using SupportDesk.Domain.Aggregates.Tickets;
-using SupportDesk.UnitTests.Application.Features.Tickets.Commands;
 using SupportDesk.UnitTests.TestDoubles;
 
 namespace SupportDesk.UnitTests.Application.Features.Tickets.Commands;
 
 public class EscalateTicketCommandHandlerTests
 {
-    private static EscalateTicketRequest Request(string reason = "Issue escalated due to customer business impact.", string escalatedBy = "lead@example.com") =>
-        new(reason, escalatedBy);
+    private const string DefaultActor = "Alex Turner";
+
+    private static EscalateTicketRequest Request(string reason = "Issue escalated due to customer business impact.") =>
+        new(reason);
 
     [Fact]
     public async Task HandleAsync_WhenTicketDoesNotExist_ThrowsNotFound()
@@ -20,7 +21,7 @@ public class EscalateTicketCommandHandlerTests
             .ReturnsAsync((Ticket?)null);
 
         await Assert.ThrowsAsync<NotFoundException>(
-            () => context.EscalateTicket.HandleAsync(999, Request(), CancellationToken.None));
+            () => context.EscalateTicket.HandleAsync(999, Request(), DefaultActor, CancellationToken.None));
 
         context.VerifySaved(Times.Never());
     }
@@ -37,7 +38,7 @@ public class EscalateTicketCommandHandlerTests
         context.ExistingTicket(ticket);
 
         var ex = await Assert.ThrowsAsync<ConflictException>(
-            () => context.EscalateTicket.HandleAsync(1, Request(), CancellationToken.None));
+            () => context.EscalateTicket.HandleAsync(1, Request(), DefaultActor, CancellationToken.None));
 
         Assert.Contains("Critical", ex.Message);
         context.VerifySaved(Times.Never());
@@ -58,14 +59,14 @@ public class EscalateTicketCommandHandlerTests
         context.ExistingTicket(ticket);
 
         var ex = await Assert.ThrowsAsync<ConflictException>(
-            () => context.EscalateTicket.HandleAsync(1, Request(), CancellationToken.None));
+            () => context.EscalateTicket.HandleAsync(1, Request(), DefaultActor, CancellationToken.None));
 
         Assert.Contains(status.ToString(), ex.Message);
         context.VerifySaved(Times.Never());
     }
 
     [Fact]
-    public async Task HandleAsync_RaisesPriorityOneLevel_AndRecordsEscalationHistory()
+    public async Task HandleAsync_RaisesPriorityOneLevel_AndRecordsEscalationHistoryWithTokenActor()
     {
         var context = new TicketCommandTestContext();
         var ticket = TicketBuilder.Default
@@ -76,8 +77,8 @@ public class EscalateTicketCommandHandlerTests
 
         context.ExistingTicket(ticket);
 
-        var result = await context.EscalateTicket.HandleAsync(
-            1, Request("Escalating to high due to severity.", "manager@example.com"), CancellationToken.None);
+        await context.EscalateTicket.HandleAsync(
+            1, Request("Escalating to high due to severity."), "Sara Lindqvist", CancellationToken.None);
 
         Assert.Equal(TicketPriority.High, ticket.Priority);
         context.Tickets.Verify(t => t.AddEscalationAsync(
@@ -85,7 +86,7 @@ public class EscalateTicketCommandHandlerTests
                 e.TicketId == 1 &&
                 e.FromPriority == TicketPriority.Medium &&
                 e.ToPriority == TicketPriority.High &&
-                e.EscalatedBy == "manager@example.com" &&
+                e.EscalatedBy == "Sara Lindqvist" &&
                 e.Reason == "Escalating to high due to severity."),
             It.IsAny<CancellationToken>()), Times.Once());
 
@@ -106,7 +107,7 @@ public class EscalateTicketCommandHandlerTests
         context.ExistingTicket(ticket);
 
         // Low escalates to Medium. Standard customer Medium SLA base window = 24h.
-        await context.EscalateTicket.HandleAsync(1, Request(), CancellationToken.None);
+        await context.EscalateTicket.HandleAsync(1, Request(), DefaultActor, CancellationToken.None);
 
         Assert.Equal(TicketPriority.Medium, ticket.Priority);
         Assert.Equal(context.Clock.UtcNow.AddHours(24), ticket.DueAtUtc);

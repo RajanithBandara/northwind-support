@@ -118,7 +118,6 @@ describe('EscalationPanel', () => {
     await waitFor(() => {
       expect(escalateSpy).toHaveBeenCalledWith(ticket.id, {
         reason: 'Severity increased due to SLA approaching risk threshold.',
-        escalatedBy: 'team-lead',
       });
       expect(onEscalated).toHaveBeenCalledWith(escalatedTicket);
     });

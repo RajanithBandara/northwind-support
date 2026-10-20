@@ -11,7 +11,6 @@ interface EscalationPanelProps {
 
 export function EscalationPanel({ ticket, onEscalated }: EscalationPanelProps) {
   const [reason, setReason] = useState('');
-  const [escalatedBy, setEscalatedBy] = useState('team-lead');
   const [clientError, setClientError] = useState<string>();
   const [serverError, setServerError] = useState<string>();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -26,7 +25,6 @@ export function EscalationPanel({ ticket, onEscalated }: EscalationPanelProps) {
     setClientError(undefined);
 
     const trimmedReason = reason.trim();
-    const trimmedActor = escalatedBy.trim();
 
     if (trimmedReason.length < 5) {
       setClientError('Reason must be at least 5 characters.');
@@ -38,22 +36,11 @@ export function EscalationPanel({ ticket, onEscalated }: EscalationPanelProps) {
       return;
     }
 
-    if (!trimmedActor) {
-      setClientError('Please enter who is escalating the ticket.');
-      return;
-    }
-
-    if (trimmedActor.length > 100) {
-      setClientError('Escalated by name cannot exceed 100 characters.');
-      return;
-    }
-
     setIsSubmitting(true);
 
     try {
       const updated = await ticketsApi.escalateTicket(ticket.id, {
         reason: trimmedReason,
-        escalatedBy: trimmedActor,
       });
 
       setReason('');
@@ -95,19 +82,6 @@ export function EscalationPanel({ ticket, onEscalated }: EscalationPanelProps) {
                 setReason(e.target.value);
                 if (clientError) setClientError(undefined);
               }}
-            />
-          )}
-        </Field>
-
-        <Field id="escalate-by" label="Escalated by">
-          {(fieldProps) => (
-            <input
-              {...fieldProps}
-              type="text"
-              value={escalatedBy}
-              disabled={!canEscalate || isSubmitting}
-              maxLength={100}
-              onChange={(e) => setEscalatedBy(e.target.value)}
             />
           )}
         </Field>
