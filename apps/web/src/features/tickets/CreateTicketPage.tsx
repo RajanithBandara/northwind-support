@@ -5,6 +5,8 @@ import { Spinner } from '../../components/Spinner';
 import { useReferenceData } from '../../hooks/useReferenceData';
 import type { TicketDetail } from '../../types/api';
 import { CreateTicketForm } from './components/CreateTicketForm';
+import { PriorityBadge } from './components/TicketBadges';
+import { SlaCell } from './components/SlaCell';
 
 export function CreateTicketPage() {
   const reference = useReferenceData();
@@ -30,9 +32,47 @@ export function CreateTicketPage() {
 
       {created && (
         <div className="card notice" role="status">
+          <h2>Ticket Created: {created.reference}</h2>
           <p>
-            Raised <strong>{created.reference}</strong> for {created.customer.name}.
+            Raised <strong>{created.reference}</strong> for {created.customer.name} ({created.customer.tier}).
           </p>
+
+          <dl className="summary" style={{ margin: '16px 0' }}>
+            <div>
+              <dt>Priority</dt>
+              <dd>
+                <PriorityBadge priority={created.priority} />
+                {created.triage?.priorityReason && (
+                  <span className="summary__note">{created.triage.priorityReason}</span>
+                )}
+              </dd>
+            </div>
+
+            <div>
+              <dt>SLA Due Date</dt>
+              <dd>
+                <SlaCell dueAtUtc={created.dueAtUtc} slaStatus={created.slaStatus} />
+                {created.triage?.slaReason && (
+                  <span className="summary__note">{created.triage.slaReason}</span>
+                )}
+              </dd>
+            </div>
+
+            <div>
+              <dt>Assigned Agent</dt>
+              <dd>
+                {created.assignedAgent ? (
+                  <span>{created.assignedAgent.fullName}</span>
+                ) : (
+                  <strong>Unassigned</strong>
+                )}
+                {created.triage?.assignmentReason && (
+                  <span className="summary__note">{created.triage.assignmentReason}</span>
+                )}
+              </dd>
+            </div>
+          </dl>
+
           <div className="button-row">
             <button
               type="button"

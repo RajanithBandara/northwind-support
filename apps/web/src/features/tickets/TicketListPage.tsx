@@ -32,6 +32,7 @@ export function TicketListPage() {
         agents={reference.data?.agents ?? []}
         categories={reference.data?.categories ?? []}
         customers={reference.data?.customers ?? []}
+        isLoading={isLoading}
         onChange={updateFilters}
         onReset={resetFilters}
       />
