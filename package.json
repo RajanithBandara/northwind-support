@@ -10,6 +10,7 @@
     "db:down": "docker compose down",
     "db:reset": "docker compose down -v && docker compose up -d sqlserver",
     "api": "dotnet run --project apps/api/src/SupportDesk.Presentation",
+    "api:up": "docker compose up --build api",
     "web": "npm run dev --workspace apps/web",
     "build": "dotnet build && npm run build --workspace apps/web",
     "test": "dotnet test && npm run test --workspace apps/web",
