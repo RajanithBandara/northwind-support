@@ -1,10 +1,54 @@
-import type { ProblemDetails } from '../types/api';
+import type { CurrentAgent, LoginResponse, ProblemDetails } from '../types/api';
 
 /**
  * Where the API lives. In development this stays '/api' and the Vite dev server proxies it
  * to the backend; set VITE_API_BASE_URL to point a build somewhere else. See .env.example.
  */
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? '/api';
+
+export const AUTH_STORAGE_KEY = 'northwind_support_session';
+
+export interface StoredSession {
+  token: string;
+  expiresAtUtc: string;
+  agent: CurrentAgent;
+}
+
+type UnauthorizedListener = () => void;
+const unauthorizedListeners = new Set<UnauthorizedListener>();
+
+export function onUnauthorized(listener: UnauthorizedListener): () => void {
+  unauthorizedListeners.add(listener);
+  return () => {
+    unauthorizedListeners.delete(listener);
+  };
+}
+
+export function getStoredSession(): StoredSession | null {
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as StoredSession;
+    if (!parsed.token || !parsed.agent) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredSession(session: LoginResponse): void {
+  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+}
+
+export function clearStoredSession(): void {
+  window.localStorage.removeItem(AUTH_STORAGE_KEY);
+}
 
 /** A failed HTTP call, carrying the problem document the API returned. */
 export class ApiError extends Error {
@@ -26,20 +70,32 @@ export class ApiError extends Error {
 }
 
 /**
- * The single place that talks to the API. Returns parsed JSON, or throws an
- * {@link ApiError} that callers can show to the user.
+ * The single place that talks to the API. Attaches the stored JWT bearer token when present,
+ * clears the session on 401 responses, and returns parsed JSON or throws an {@link ApiError}.
  */
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const session = getStoredSession();
+  const headers = new Headers(init?.headers);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  if (session?.token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${session.token}`);
+  }
+
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
+    headers,
   });
 
   if (!response.ok) {
     const problem = await readProblem(response);
+
+    if (response.status === 401 && path !== '/auth/login') {
+      clearStoredSession();
+      unauthorizedListeners.forEach((listener) => listener());
+    }
 
     throw new ApiError(
       response.status,

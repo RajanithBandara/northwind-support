@@ -19,8 +19,17 @@ public sealed class EscalateTicketCommandHandler(
     GetTicketQueryHandler getTicket,
     ILogger<EscalateTicketCommandHandler> logger)
 {
-    public async Task<TicketDetailDto> HandleAsync(int id, EscalateTicketRequest request, CancellationToken ct)
+    public async Task<TicketDetailDto> HandleAsync(
+        int id,
+        EscalateTicketRequest request,
+        string escalatedBy,
+        CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(escalatedBy))
+        {
+            throw new UnauthorizedException("Authenticated agent identity is required to escalate a ticket.");
+        }
+
         var ticket = await tickets.GetByIdAsync(id, ct)
             ?? throw new NotFoundException("Ticket", id);
 
@@ -60,7 +69,7 @@ public sealed class EscalateTicketCommandHandler(
             fromDueAtUtc,
             triage.NewDueAtUtc,
             request.Reason,
-            request.EscalatedBy,
+            escalatedBy,
             now);
 
         await tickets.AddEscalationAsync(escalation, ct);
@@ -68,7 +77,7 @@ public sealed class EscalateTicketCommandHandler(
 
         logger.LogInformation(
             "Ticket {Reference} escalated from {FromPriority} to {ToPriority} by {EscalatedBy}.",
-            ticket.Reference, fromPriority, triage.NewPriority, request.EscalatedBy);
+            ticket.Reference, fromPriority, triage.NewPriority, escalatedBy);
 
         return await getTicket.HandleAsync(id, ct);
     }

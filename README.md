@@ -87,16 +87,69 @@ Both pass on a clean checkout and neither needs a database.
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `sortBy`, `sortDirection`. **Filters are accepted but not applied yet** (Task 1). |
-| `GET /api/tickets/{id}` | One ticket |
-| `POST /api/tickets` | Create a ticket |
+| `POST /api/auth/login` | Sign in with agent email and password; returns a JWT, expiry, and agent profile *(open)* |
+| `GET /api/auth/me` | Return the authenticated agent profile or `401` |
+| `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `slaStatus`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `sortBy`, `sortDirection` — all applied in SQL |
+| `GET /api/tickets/{id}` | One ticket with computed SLA status |
+| `POST /api/tickets` | Create a ticket with automatic priority, SLA window, and specialist/load-balanced agent triage |
+| `POST /api/tickets/{id}/escalate` | Escalate priority one step, recompute due date, re-evaluate assignee, and record immutable history (`escalatedBy` taken from JWT) |
+| `GET /api/tickets/{id}/escalations` | Escalation history for a ticket (newest first) |
 | `PATCH /api/tickets/{id}/status` · `/assignment` | Change status / assignee |
 | `GET /api/customers` · `/api/agents` · `/api/categories` | Reference data |
 
-Errors are `ProblemDetails`: `400` validation, `404` not found, `409` conflict or business rule.
+Errors are `ProblemDetails`: `400` validation, `401` unauthorized, `404` not found, `409` conflict or business rule. All endpoints except `POST /api/auth/login` and `/swagger` require a valid `Bearer` JWT enforced via a global fallback authorization policy.
 
 **Seed data:** 5 categories, 6 customers (3 Premium), 6 agents (one inactive, one at their limit)
 and 40 tickets across every status, priority and SLA state.
+
+---
+
+## Development Login Credentials (Task 3)
+
+All seeded agents share the local development fixture password:
+
+- **Password:** `Northwind_Dev_Pass1!`
+- **Active agent emails:**
+  - `alex.turner@northwind-support.example` (General, Billing)
+  - `priya.nair@northwind-support.example` (Billing, Account)
+  - `marcus.reed@northwind-support.example` (Technical, Outage, Security)
+  - `elena.rostova@northwind-support.example` (Security, Outage)
+  - `sam.okafor@northwind-support.example` (General, Technical, Account — at open ticket limit)
+- **Inactive agent email (rejected with 401):**
+  - `yuki.tanaka@northwind-support.example`
+
+---
+
+## Design Decisions & Architecture Notes
+
+### Task 1 — Defect Fix (`DEFECT-117`) & Server-Side Filtering
+- **Root cause of `DEFECT-117`:** Calling `setFilters` inside `useTicketList` immediately triggered a ticket refetch, setting `isLoading = true` on every keystroke. Because `TicketFiltersBar` disabled all inputs (including the search `<input>`) whenever `disabled={isLoading}` was true, the browser blurred the active input after the first character typed. Additionally, the search text was not debounced and `TicketRepository.GetPageAsync` accepted `TicketListCriteria` without applying the filters in SQL.
+- **Fix:** Added a 250 ms debounce for the search input in `TicketFiltersBar` and stopped disabling the search input while background refetches are in flight. Implemented full `IQueryable<Ticket>` filtering (`search`, `status`, `priority`, `slaStatus`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`) and sorting in `TicketRepository.GetPageAsync` before `.CountAsync()` and `.Skip()/.Take()`.
+
+### Task 2 — Automatic Triage, Escalation & SLA Status
+- **Where business rules live:**
+  - **Domain (`Ticket`, `TicketEscalation`):** Enforces ticket invariants (e.g., cannot escalate `Critical` or `Resolved`/`Closed` tickets, priority step progression, immutable `TicketEscalation` audit creation).
+  - **Application (`TicketTriageService`, `SlaCalculator`):** Coordinates BR-1 through BR-8 using injected `IClock` and `IOptions<SlaOptions>` (`appsettings.Development.json` `Sla` section + category flags `ForcesCriticalPriority` and `RequiresSpecialist`), keeping zero hard-coded category names.
+  - **Infrastructure (`TicketRepository`, `TicketEscalationConfiguration`):** Translates `SlaStatus` filtering directly into SQL expressions using `EF.Functions.DateDiffSecond` so count, sort, and pagination all execute in the database. Added index `IX_TicketEscalations_TicketId_EscalatedAtUtc` on `(TicketId, EscalatedAtUtc)` so `GET /api/tickets/{id}/escalations` (ordered newest-first) is satisfied without a table scan.
+
+### Task 3 — Authentication & Session Management
+- **AU-1 Credentials on `Agent` vs. separate `Users` table:** Added `PasswordHash` (`nvarchar(512)`) directly to the `Agent` aggregate via the committed `AddAgentPasswordHash` migration. Only existing support agents sign in to this internal desk, and every authenticated action (`GET /api/auth/me`, `escalatedBy` attribution) maps 1:1 to an `Agent`. A separate `Users` table would add an unnecessary join and dual-entity lifecycle for a single-actor internal system.
+- **AU-2 Password hashing:** Implemented `Pbkdf2PasswordHasher` using `Rfc2898DeriveBytes.Pbkdf2` (HMAC-SHA256, 100,000 iterations, 16-byte cryptographic random salt, 32-byte subkey) and constant-time verification via `CryptographicOperations.FixedTimeEquals`.
+- **AU-7 Token lifetime & signing key:** Chose an **8-hour (480-minute)** token lifetime to match a standard support agent shift without interrupting active ticket triage, configurable via `Jwt:ExpiryMinutes`. The HMAC-SHA256 signing key is read from configuration (`Jwt:SigningKey` / environment variable `Jwt__SigningKey` documented in `.env.example`).
+- **AU-10 Frontend token storage & trade-off:** The session (`token`, `expiresAtUtc`, and `agent` summary) is stored in `window.localStorage` under `northwind.support.auth.v1` and attached to every request in `apps/web/src/api/client.ts`.
+  - *Trade-off:* `localStorage` persists across page refreshes and browser tabs (unlike in-memory state, which logs the agent out on every reload) and works seamlessly with standard `Authorization: Bearer` headers, at the cost of being readable by JavaScript if an XSS vulnerability were introduced (unlike an `HttpOnly` cookie, which instead requires CSRF mitigations).
+
+---
+
+## Known Limitations
+
+The following items were intentionally left out of scope per the specification:
+- User self-registration, password reset, and email verification flows
+- Refresh tokens and sliding session renewal (tokens expire after the 8-hour shift window and trigger an automatic redirect to `/login` on `401`)
+- OAuth / SSO / OIDC integration and Multi-Factor Authentication (MFA)
+- Account lockout and login rate limiting / brute-force throttling
+- Fine-grained role-based access control (RBAC) matrix (all active agents have equal permissions)
+- Real-time push notifications (WebSockets / SignalR) for live ticket or SLA updates
 
 ## Troubleshooting
 
